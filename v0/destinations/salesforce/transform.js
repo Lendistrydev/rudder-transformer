@@ -144,7 +144,7 @@ async function getSalesforceIdFromPayload(message, authorizationData) {
 
   // if nothing is present consider it as a Lead Object
   // BACKWORD COMPATIBILITY
-  if (salesforceMaps.length === 0) {
+  if (salesforceMaps.length === 0 && message.type === EventType.IDENTIFY) {
     // its a lead object. try to get lead object id using search query
     // check if the lead exists
     // need to perform a parameterized search for this using email
