@@ -4,6 +4,7 @@ const { EventType } = require("../../../constants");
 const {
   SF_API_VERSION,
   SF_TOKEN_REQUEST_URL,
+  SF_CONTACT_OWNER_ID,
   identifyMappingJson,
   ignoredTraits
 } = require("./config");
@@ -225,7 +226,8 @@ async function processTrack(message, authorizationData, mapProperty) {
         },
         "Subject": get(message, "event"),
         "StartDateTime": get(message, "originalTimestamp"),
-        "EndDateTime": get(message, "originalTimestamp")
+        "EndDateTime": get(message, "originalTimestamp"),
+        "OwnerId": SF_CONTACT_OWNER_ID
     }
 
   const responseData = [];
