@@ -23,8 +23,6 @@ jobs:
         password: ${{ secrets.GITHUB_TOKEN }}
     - name: Build the Docker image
       run: |
-        docker build . --file Dockerfile --tag ghcr.io/lendistrydev/sbl-cdp/rudder-transformer:$GIT_COMMIT
-        docker push ghcr.io/lendistrydev/sbl-cdp/rudder-transformer:$GIT_COMMIT
-      env:
-        GIT_COMMIT: $(git log -1 --pretty=%h)
+        docker build . --file Dockerfile --tag ghcr.io/lendistrydev/sbl-cdp/rudder-transformer:$(git log -1 --pretty=%h)
+        docker push ghcr.io/lendistrydev/sbl-cdp/rudder-transformer:$(git log -1 --pretty=%h)
       
