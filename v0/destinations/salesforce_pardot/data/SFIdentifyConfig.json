@@ -1,0 +1,27 @@
+[
+  { "destKey": "City", "sourceKeys": ["address.city", "city"] },
+  {
+    "destKey": "Company",
+    "sourceKeys": ["company.name", "company"],
+    "metadata": { "defaultValue": "n/a" }
+  },
+  { "destKey": "Country", "sourceKeys": ["address.country", "country"] },
+  { "destKey": "CreatedDate", "sourceKeys": ["createdAt", "createddate"] },
+  { "destKey": "Description", "sourceKeys": "description" },
+  { "destKey": "email", "sourceKeys": "email" },
+  { "destKey": "first_name", "sourceKeys": "first_name" },
+  { "destKey": "Industry", "sourceKeys": "company.industry" },
+  { "destKey": "last_name", "sourceKeys": "last_name" },
+  { "destKey": "LeadSource", "sourceKeys": "LeadSource" },
+  { "destKey": "tenantID", "sourceKeys": "tenant-id" },
+  { "destKey": "Phone", "sourceKeys": "phone" },
+  {
+    "destKey": "PostalCode",
+    "sourceKeys": ["address.postalCode", "postalCode"]
+  },
+  { "destKey": "Rating", "sourceKeys": "rating" },
+  { "destKey": "State", "sourceKeys": ["address.state", "state"] },
+  { "destKey": "Street", "sourceKeys": ["address.street", "street"] },
+  { "destKey": "Title", "sourceKeys": "title" },
+  { "destKey": "Website", "sourceKeys": "website" }
+]
