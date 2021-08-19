@@ -88,7 +88,8 @@ function responseBuilderSimple(
   const response = defaultRequestConfig();
   const header = {
     Authorization: authorizationData.token,
-    "Pardot-Business-Unit-Id": authorizationData.businessUnitId
+    "Pardot-Business-Unit-Id": authorizationData.businessUnitId,
+    'Content-Type': 'application/x-www-form-urlencoded'
   };
   response.method = defaultPostRequestConfig.requestMethod;
   response.headers = header;
