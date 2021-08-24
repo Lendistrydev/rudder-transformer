@@ -2,16 +2,20 @@ const { getMappingConfig } = require("../../util");
 
 const ConfigCategory = {
   IDENTIFY: {
-    name: "SFIdentifyConfig"
+    name: "SFPardotIdentifyConfig"
   },
   IGNORE: {
-    name: "SFIgnoreConfig"
+    name: "SFPardotIgnoreConfig"
   }
 };
 
-const SF_API_VERSION = "50.0";
+const SFPARDOT_API_VERSION = "4";
 const SF_TOKEN_REQUEST_URL = process.env.SF_TOKEN_REQUEST_URL
   ?  process.env.SF_TOKEN_REQUEST_URL: "https://login.salesforce.com/services/oauth2/token";
+
+const SFPARDOT_API_REQUEST_URL = process.env.SFPARDOT_API_REQUEST_URL
+    ?  process.env.SFPARDOT_API_REQUEST_URL: "https://pi.demo.pardot.com/api";
+
 
 const SF_CONTACT_OWNER_ID = process.env.SF_CONTACT_OWNER_ID
   ? process.env.SF_CONTACT_OWNER_ID:"00554000008kLjBAAU"; //API User
@@ -19,8 +23,9 @@ const SF_CONTACT_OWNER_ID = process.env.SF_CONTACT_OWNER_ID
 const mappingConfig = getMappingConfig(ConfigCategory, __dirname);
 
 module.exports = {
-  SF_API_VERSION,
+  SFPARDOT_API_VERSION,
   SF_TOKEN_REQUEST_URL,
+  SFPARDOT_API_REQUEST_URL,
   SF_CONTACT_OWNER_ID,
   identifyMappingJson: mappingConfig[ConfigCategory.IDENTIFY.name],
   ignoredTraits: mappingConfig[ConfigCategory.IGNORE.name]

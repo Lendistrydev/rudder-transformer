@@ -13,7 +13,7 @@
   { "destKey": "Industry", "sourceKeys": "company.industry" },
   { "destKey": "last_name", "sourceKeys": "last_name" },
   { "destKey": "LeadSource", "sourceKeys": "LeadSource" },
-  { "destKey": "tenantID", "sourceKeys": "tenant-id" },
+  { "destKey": "tenantID", "sourceKeys": "tenantId" },
   { "destKey": "Phone", "sourceKeys": "phone" },
   {
     "destKey": "PostalCode",

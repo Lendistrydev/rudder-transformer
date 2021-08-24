@@ -1,23 +1,17 @@
-const get = require("get-value");
 const axios = require("axios");
-const { EventType } = require("../../../constants");
+const {EventType} = require("../../../constants");
 const {
-  SF_API_VERSION,
-  SF_TOKEN_REQUEST_URL,
-  SF_CONTACT_OWNER_ID,
-  identifyMappingJson,
-  ignoredTraits
+    SF_TOKEN_REQUEST_URL,
+    SFPARDOT_API_REQUEST_URL,
+    ignoredTraits, SFPARDOT_API_VERSION
 } = require("./config");
 const {
-  removeUndefinedValues,
-  defaultRequestConfig,
-  defaultPostRequestConfig,
-  getFieldValueFromMessage,
-  constructPayload,
-  getFirstAndLastName,
-  getSuccessRespEvents,
-  getErrorRespEvents,
-  CustomError
+    defaultRequestConfig,
+    defaultPostRequestConfig,
+    getFieldValueFromMessage,
+    getSuccessRespEvents,
+    getErrorRespEvents,
+    CustomError
 } = require("../../util");
 const logger = require("../../../logger");
 
@@ -25,78 +19,72 @@ const logger = require("../../../logger");
 // The "Authorization: Bearer <token>" header element needs to be passed for
 // authentication for all SFDC REST API calls
 async function getSFPardotHeader(destination) {
-  const tempURL =`${SF_TOKEN_REQUEST_URL}`;
-  logger.info(tempURL);
-  const authUrl = `${SF_TOKEN_REQUEST_URL}?username=${
-    destination.Config.userName
-  }&password=${encodeURIComponent(
-    destination.Config.password
-  )}&client_id=${
-    destination.Config.consumerKey
-  }&client_secret=${destination.Config.consumerSecret}&grant_type=password`;
 
+    const authUrl = `${SF_TOKEN_REQUEST_URL}?username=${
+        destination.Config.userName
+    }&password=${encodeURIComponent(
+        destination.Config.password
+    )}&client_id=${
+        destination.Config.consumerKey
+    }&client_secret=${destination.Config.consumerSecret}&grant_type=password`;
 
-  let response;
-  try {
-    response = await axios.post(authUrl, {});
-  } catch (error) {
-    throw new CustomError(
-      `SALESFORCE AUTH FAILED: ${error.message}`,
-      error.status || 400
-    );
-  }
+    let response;
+    try {
+        response = await axios.post(authUrl, {});
+    } catch (error) {
+        throw new CustomError(
+            `SALESFORCE AUTH FAILED: ${error.message}`,
+            error.status || 400
+        );
+    }
 
-  return {
-    token: `Bearer ${response.data.access_token}`,
-    instanceUrl: response.data.instance_url,
-    businessUnitId: destination.Config.businessUnitId
-  };
+    return {
+        token: `Bearer ${response.data.access_token}`,
+        instanceUrl: response.data.instance_url,
+        businessUnitId: destination.Config.businessUnitId
+    };
 }
 
 function responseBuilderSimple(
-  traits,
-  authorizationData,
-  mapProperty
+    traits,
+    prospectMap,
+    authorizationData
 ) {
 
-  // if id is valid, do update else create the object
-  // POST for create, PATCH for update
-  // let targetEndpoint = `${authorizationData.instanceUrl}/services/data/v${SF_API_VERSION}/sobjects/${salesforceType}`;
-  let pardotEndPointURL = `https://pi.demo.pardot.com/api/prospect/version/4/do/create?format=json`;
+    let pardotCreateEndPointURL = `${SFPARDOT_API_REQUEST_URL}/prospect/version/4/do/create?format=json`;
+    let pardotUpdateEndPointURL = `${SFPARDOT_API_REQUEST_URL}/prospect/version/4/do/update/id/`;
+    const response = defaultRequestConfig();
 
-  // const tenantId = '';
-  // const userId = '';
-  //
-  // if (tenantId && userId) {
-  //   // pardotEndPointURL += `/${salesforceId}?_HttpMethod=PATCH`;
-  //   logger.info('t + u = ' + tenantId + ' ' + userId);
-  //   pardotEndPointURL = 'https://pi.demo.pardot.com/api/prospect/version/4/do/update/id/${userId}?format=json';
-  // }
+    const header = {
+        Authorization: authorizationData.token,
+        "Pardot-Business-Unit-Id": authorizationData.businessUnitId,
+        "Content-Type": "application/x-www-form-urlencoded"
+    };
 
-  // First name and last name need to be extracted from the name field
-  // get traits from the message
-  let rawPayload = traits;
-  // map using the config only if the type is Lead
+    response.method = defaultPostRequestConfig.requestMethod;
+    response.headers = header;
 
-    rawPayload = constructPayload(
-      { ...traits, ...getFirstAndLastName(traits, "n/a") },
-      identifyMappingJson
-    );
+    if( prospectMap) {
+        // Update existing Prospect REQUEST
+        logger.info('Update Prospect request for: ' + traits.email + ' with TenantId: ' + traits.tenantId);
+        pardotEndPointURL = pardotUpdateEndPointURL + prospectMap.prospectId + `?format=json`;
 
-  logger.info('rawPayload  = ' + rawPayload);
+    } else {
+        // Create New Prospect
+        logger.info('Create Prospect request for: ' + traits.email + ' with TenantId: ' + traits.tenantId);
+        pardotEndPointURL = pardotCreateEndPointURL;
+    }
 
-  const response = defaultRequestConfig();
-  const header = {
-    Authorization: authorizationData.token,
-    "Pardot-Business-Unit-Id": authorizationData.businessUnitId
-  };
-  response.method = defaultPostRequestConfig.requestMethod;
-  response.headers = header;
-  response.body.FORM = removeUndefinedValues(rawPayload);
-  response.endpoint = pardotEndPointURL;
+    response.body.FORM = {
+        email: traits.email,
+        first_name: traits.first_name,
+        last_name: traits.last_name,
+        tenantID: traits.tenantId
+    };
+    response.endpoint = pardotEndPointURL;
+    response.statusCode = 200;
 
-  logger.info('^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^')
-  return response;
+    return response;
 }
 
 // Check for externalId field under context and look for probable Salesforce objects
@@ -114,225 +102,184 @@ function responseBuilderSimple(
 // We'll use the Salesforce Object names by removing "Salesforce-" string from the type field
 //
 // Default Object type will be "Lead" for backward compatibility
-async function getSalesforceIdFromPayload(message, authorizationData) {
-  // define default map
-  const salesforceMaps = [];
+async function getPardotProspectsFromPayload(message, authorizationData) {
+    // define default map
+    const prospectsMaps = [];
 
-  const contactId = get(message, "properties.contactId");
-  const salesforceTrue = get(message, "properties.salesforce", { default: false });
-  if (contactId && salesforceTrue) {
-	  salesforceMaps.push({salesforceType: "Event"})
-  }
-
-  // get externalId
-  const externalIds = get(message, "context.externalId");
-
-  // if externalIds are present look for type `Salesforce-`
-  if (externalIds && Array.isArray(externalIds)) {
-    externalIds.forEach(extIdMap => {
-      const { type, id } = extIdMap;
-      if (type.includes("Salesforce")) {
-        salesforceMaps.push({
-          salesforceType: type.replace("Salesforce-", ""),
-          salesforceId: id
-        });
-      }
-    });
-  }
-
-  // if nothing is present consider it as a Lead Object
-  // BACKWORD COMPATIBILITY
-  if (salesforceMaps.length === 0 && message.type === EventType.IDENTIFY) {
-    // its a lead object. try to get lead object id using search query
-    // check if the lead exists
-    // need to perform a parameterized search for this using email
     const email = getFieldValueFromMessage(message, "email");
+    //const tenantId = getFieldValueFromMessage(message, "tenantID");
+    const traits = getFieldValueFromMessage(message, "traits");
+    let requestTenantId = traits.tenantId;
 
-    if (!email) {
-      throw new CustomError("Invalid Email address for Lead Objet", 400);
+    if (!email || !requestTenantId) {
+        throw new CustomError("Missing Email address and/or TenantID for Prospect Objet", 400);
     }
 
-    const leadQueryUrl = `${authorizationData.instanceUrl}/services/data/v${SF_API_VERSION}/parameterizedSearch/?q=${email}&sobject=Lead&Lead.fields=id`;
-
-    // request configuration will be conditional
-    const leadQueryResponse = await axios.get(leadQueryUrl, {
-      headers: { Authorization: authorizationData.token }
+    const prospectQueryURL = `${SFPARDOT_API_REQUEST_URL}/prospect/version/${SFPARDOT_API_VERSION}/do/read/email/${encodeURIComponent(email)}&format=json`;
+    const prospectQueryResponse = await axios.get(prospectQueryURL, {
+        headers: {
+            Authorization: authorizationData.token,
+            "Pardot-Business-Unit-Id": authorizationData.businessUnitId,
+        }
+    }).catch(function(error) {
+        logger.info('Prospect: ' + email + ' with tenantId: ' + requestTenantId + ' does not exist in Pardot');
     });
 
-    let leadObjectId;
     if (
-      leadQueryResponse &&
-      leadQueryResponse.data &&
-      leadQueryResponse.data.searchRecords
+        prospectQueryResponse &&
+        prospectQueryResponse.data
     ) {
-      // if count is greater than zero, it means that lead exists, then only update it
-      // else the original endpoint, which is the one for creation - can be used
-      if (leadQueryResponse.data.searchRecords.length > 0) {
-        leadObjectId = leadQueryResponse.data.searchRecords[0].Id;
-      }
+        // if count is greater than zero, it means that multiple prospects exists in Pardot with same tenant ID
+        // this case can happen if such prospects are created manually in Pardot
+        if (prospectQueryResponse.data.prospect && Array.isArray(prospectQueryResponse.data.prospect)) {
+            prospectQueryResponse.data.prospect.forEach(p => {
+                const {tenantID, id} = p;
+                if(tenantID == requestTenantId) {
+                    // Add a Prospect to the be updated
+                    prospectsMaps.push({prospectId: id});
+                }
+            });
+        } else if (prospectQueryResponse.data.prospect && typeof prospectQueryResponse.data.prospect == 'object') {
+            // Only 1 prospect exists and is returned from Pardot
+            if(prospectQueryResponse.data.prospect.tenantID == requestTenantId) {
+                prospectsMaps.push({prospectId: prospectQueryResponse.data.prospect.id});
+            }
+        }
     }
 
-    // add a Lead Object to the response
-    salesforceMaps.push({ salesforceType: "Lead", salesforceId: leadObjectId });
-  }
-
-  return salesforceMaps;
+    return prospectsMaps;
 }
+
 
 // Function for handling identify events
 async function processIdentify(message, authorizationData, mapProperty) {
-  // check the traits before hand
-  const traits = getFieldValueFromMessage(message, "traits");
-  if (!traits) {
-    throw new CustomError("Invalid traits for Salesforce request", 400);
-  }
-
-  // if traits is correct, start processing
-  const responseData = [];
-
-
-  logger.info('--------------------------------- Start ----------------------------------------');
-  responseData.push(
-      responseBuilderSimple(
-          traits,
-          authorizationData,
-          mapProperty
-      )
-  );
-  logger.info('--------------------------------- End ----------------------------------------');
-
-  return responseData;
-}
-//
-// Function for handling track events
-async function processTrack(message, authorizationData, mapProperty) {
-
-
-  const traits = {
-	"Who": {
-        "attributes": {"type": "Contact"},
-        "ID__c": get(message, "properties.contactId")
-        },
-        "Subject": get(message, "event"),
-        "StartDateTime": get(message, "originalTimestamp"),
-        "EndDateTime": get(message, "originalTimestamp"),
-        "OwnerId": SF_CONTACT_OWNER_ID
+    // check the traits before hand
+    const traits = getFieldValueFromMessage(message, "traits");
+    if (!traits) {
+        throw new CustomError("Invalid traits for Salesforce request", 400);
     }
 
-  const responseData = [];
-
-  // get salesforce object map
-  const salesforceMaps = await getSalesforceIdFromPayload(
-    message,
-    authorizationData
-  );
-
-  // iterate over the object types found
-  salesforceMaps.forEach(salesforceMap => {
-    // finally build the response and push to the list
-    responseData.push(
-      responseBuilderSimple(
-        traits,
-        salesforceMap,
-        authorizationData,
-        mapProperty
-      )
+    // get Pardot Users based on email and tenant ID from payload
+    // TODO: Replace message with traits?
+    const prospectMaps = await getPardotProspectsFromPayload(
+        message,
+        authorizationData
     );
-  });
 
-  return responseData;
+    // if traits is correct, start processing
+    const responseData = [];
+
+    if (prospectMaps.length > 0) {
+        prospectMaps.forEach(prospectMap => {
+        responseData.push(
+            responseBuilderSimple(
+                traits,
+                prospectMap,
+                authorizationData
+            )
+        );
+        })
+    } else {
+        responseData.push(
+            responseBuilderSimple(
+                traits,
+                undefined,
+                authorizationData
+            )
+        );
+    }
+
+    return responseData;
 }
 
 // Generic process function which invokes specific handler functions depending on message type
-// and event type where applicable
+// and event type where applicable. Currently, this Pardot transformer only handles IDENTIFY events.
 async function processSingleMessage(message, authorizationData, mapProperty) {
 
-  let response;
-  if (message.type === EventType.IDENTIFY) {
-    response = await processIdentify(message, authorizationData, mapProperty);
-  } else if (message.type === EventType.TRACK) {
-    response = await processTrack(message, authorizationData, mapProperty);
-  } else {
-    throw new CustomError(`message type ${message.type} is not supported`, 400);
-  }
-  return response;
+    let response;
+    if (message.type === EventType.IDENTIFY) {
+        response = await processIdentify(message, authorizationData, mapProperty);
+    } else {
+        throw new CustomError(`message type ${message.type} is not supported`, 400);
+    }
+    return response;
 }
 
 async function process(event) {
-  // Get the authorization header if not available
-
-  const authorizationData = await getSFPardotHeader(event.destination);
-  const response = await processSingleMessage(
-    event.message,
-    authorizationData,
-    event.destination.Config.mapProperty === undefined
-      ? true
-      : event.destination.Config.mapProperty
-  );
-  return response;
+    // Get the authorization header
+    const authorizationData = await getSFPardotHeader(event.destination);
+    const response = await processSingleMessage(
+        event.message,
+        authorizationData,
+        event.destination.Config.mapProperty === undefined
+            ? true
+            : event.destination.Config.mapProperty
+    );
+    return response;
 }
 
+
 const processRouterDest = async inputs => {
-  if (!Array.isArray(inputs) || inputs.length <= 0) {
-    const respEvents = getErrorRespEvents(null, 400, "Invalid event array");
-    return [respEvents];
-  }
+    if (!Array.isArray(inputs) || inputs.length <= 0) {
+        const respEvents = getErrorRespEvents(null, 400, "Invalid event array");
+        return [respEvents];
+    }
 
-  let authorizationData;
-  try {
-    authorizationData = await getSFDCHeader(inputs[0].destination);
-  } catch (error) {
-    const respEvents = getErrorRespEvents(
-      inputs.map(input => input.metadata),
-      400,
-      "Authorisation failed"
-    );
-    return [respEvents];
-  }
-
-  if (!authorizationData) {
-    const respEvents = getErrorRespEvents(
-      inputs.map(input => input.metadata),
-      400,
-      "Authorisation failed"
-    );
-    return [respEvents];
-  }
-
-  const respList = await Promise.all(
-    inputs.map(async input => {
-      try {
-        if (input.message.statusCode) {
-          // already transformed event
-          return getSuccessRespEvents(
-            input.message,
-            [input.metadata],
-            input.destination
-          );
-        }
-
-        // unprocessed payload
-        return getSuccessRespEvents(
-          await processSingleMessage(
-            input.message,
-            authorizationData,
-            input.destination.Config.mapProperty === undefined
-              ? true
-              : input.destination.Config.mapProperty
-          ),
-          [input.metadata],
-          input.destination
+    let authorizationData;
+    try {
+        authorizationData = await getSFDCHeader(inputs[0].destination);
+    } catch (error) {
+        const respEvents = getErrorRespEvents(
+            inputs.map(input => input.metadata),
+            400,
+            "Authorisation failed"
         );
-      } catch (error) {
-        return getErrorRespEvents(
-          [input.metadata],
-          error.response ? error.response.status : 500, // default to retryable
-          error.message || "Error occurred while processing payload."
+        return [respEvents];
+    }
+
+    if (!authorizationData) {
+        const respEvents = getErrorRespEvents(
+            inputs.map(input => input.metadata),
+            400,
+            "Authorisation failed"
         );
-      }
-    })
-  );
-  return respList;
+        return [respEvents];
+    }
+
+    const respList = await Promise.all(
+        inputs.map(async input => {
+            try {
+                if (input.message.statusCode) {
+                    // already transformed event
+                    return getSuccessRespEvents(
+                        input.message,
+                        [input.metadata],
+                        input.destination
+                    );
+                }
+
+                // unprocessed payload
+                return getSuccessRespEvents(
+                    await processSingleMessage(
+                        input.message,
+                        authorizationData,
+                        input.destination.Config.mapProperty === undefined
+                            ? true
+                            : input.destination.Config.mapProperty
+                    ),
+                    [input.metadata],
+                    input.destination
+                );
+            } catch (error) {
+                return getErrorRespEvents(
+                    [input.metadata],
+                    error.response ? error.response.status : 500, // default to retryable
+                    error.message || "Error occurred while processing payload."
+                );
+            }
+        })
+    );
+    return respList;
 };
 
 module.exports = { process, processRouterDest };
