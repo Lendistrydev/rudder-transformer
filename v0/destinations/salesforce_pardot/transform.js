@@ -136,6 +136,7 @@ async function getPardotProspectsFromPayload(message, authorizationData) {
                 const {tenantID, id} = p;
                 if(tenantID == requestTenantId) {
                     // Add a Prospect to the be updated
+                    // TODO: Check to see fields have changed, only then add to prospectMaps.
                     prospectsMaps.push({prospectId: id});
                 }
             });
@@ -144,6 +145,8 @@ async function getPardotProspectsFromPayload(message, authorizationData) {
             if(prospectQueryResponse.data.prospect.tenantID == requestTenantId) {
                 prospectsMaps.push({prospectId: prospectQueryResponse.data.prospect.id});
             }
+        } else {
+            logger.info('Invalid Response from Pardot');
         }
     }
 
@@ -152,7 +155,7 @@ async function getPardotProspectsFromPayload(message, authorizationData) {
 
 
 // Function for handling identify events
-async function processIdentify(message, authorizationData, mapProperty) {
+async function processIdentify(message, authorizationData) {
     // check the traits before hand
     const traits = getFieldValueFromMessage(message, "traits");
     if (!traits) {
@@ -160,7 +163,6 @@ async function processIdentify(message, authorizationData, mapProperty) {
     }
 
     // get Pardot Users based on email and tenant ID from payload
-    // TODO: Replace message with traits?
     const prospectMaps = await getPardotProspectsFromPayload(
         message,
         authorizationData
@@ -194,14 +196,16 @@ async function processIdentify(message, authorizationData, mapProperty) {
 
 // Generic process function which invokes specific handler functions depending on message type
 // and event type where applicable. Currently, this Pardot transformer only handles IDENTIFY events.
-async function processSingleMessage(message, authorizationData, mapProperty) {
+async function processSingleMessage(message, authorizationData) {
 
     let response;
     if (message.type === EventType.IDENTIFY) {
-        response = await processIdentify(message, authorizationData, mapProperty);
-    } else {
-        throw new CustomError(`message type ${message.type} is not supported`, 400);
+        response = await processIdentify(message, authorizationData);
     }
+
+    // else {
+    //     throw new CustomError(`message type ${message.type} is not supported`, 400);
+    // }
     return response;
 }
 
@@ -210,10 +214,7 @@ async function process(event) {
     const authorizationData = await getSFPardotHeader(event.destination);
     const response = await processSingleMessage(
         event.message,
-        authorizationData,
-        event.destination.Config.mapProperty === undefined
-            ? true
-            : event.destination.Config.mapProperty
+        authorizationData
     );
     return response;
 }
@@ -262,10 +263,7 @@ const processRouterDest = async inputs => {
                 return getSuccessRespEvents(
                     await processSingleMessage(
                         input.message,
-                        authorizationData,
-                        input.destination.Config.mapProperty === undefined
-                            ? true
-                            : input.destination.Config.mapProperty
+                        authorizationData
                     ),
                     [input.metadata],
                     input.destination
