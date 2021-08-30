@@ -79,7 +79,8 @@ function responseBuilderSimple(
         email: traits.email,
         first_name: traits.first_name,
         last_name: traits.last_name,
-        tenantID: traits.tenantId
+        tenantID: traits.tenantId,
+        phone: traits.phone
     };
     response.endpoint = pardotEndPointURL;
     response.statusCode = 200;
