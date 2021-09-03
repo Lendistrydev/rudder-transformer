@@ -1,6 +1,7 @@
 /* eslint-disable no-prototype-builtins */
 /* eslint-disable import/no-dynamic-require */
 /* eslint-disable global-require */
+const heapdump = require("heapdump");
 const Router = require("koa-router");
 const _ = require("lodash");
 const { lstatSync, readdirSync } = require("fs");
@@ -8,7 +9,7 @@ const fs = require("fs");
 const logger = require("./logger");
 const stats = require("./util/stats");
 const { isNonFuncObject, getMetadata } = require("./v0/util");
-const { DestHandlerMap } = require("./constants");
+const { DestHandlerMap } = require("./constants/destinationCanonicalNames");
 require("dotenv").config();
 
 const versions = ["v0"];
@@ -19,6 +20,7 @@ const transformerMode = process.env.TRANSFORMER_MODE;
 const startDestTransformer =
   transformerMode === "destination" || !transformerMode;
 const startSourceTransformer = transformerMode === "source" || !transformerMode;
+const networkMode = process.env.TRANSFORMER_NETWORK_MODE || true;
 
 const router = new Router();
 
@@ -34,6 +36,27 @@ const getDestHandler = (version, dest) => {
     return require(`./${version}/destinations/${DestHandlerMap[dest]}/transform`);
   }
   return require(`./${version}/destinations/${dest}/transform`);
+};
+
+const getDestNetHander = (version, dest) => {
+  const destination = _.toLower(dest);
+  let destNetHandler = require(`./${version}/destinations/${destination}/nethandler`);
+  if (!destNetHandler && !destNetHandler.sendData) {
+    destNetHandler = require("./adapters/genericnethandler");
+  }
+  return destNetHandler;
+};
+
+const getDestFileUploadHandler = (version, dest) => {
+  return require(`./${version}/destinations/${dest}/fileUpload`);
+};
+
+const getPollStatusHandler = (version, dest) => {
+  return require(`./${version}/destinations/${dest}/poll`);
+};
+
+const getJobStatusHandler = (version, dest) => {
+  return require(`./${version}/destinations/${dest}/fetchJobStatus`);
 };
 
 const getSourceHandler = (version, source) => {
@@ -118,7 +141,7 @@ async function handleDest(ctx, version, destination) {
     ...metaTags
   });
   ctx.body = respList;
-  ctx.set("apiVersion", API_VERSION);
+  return ctx.body;
 }
 
 async function routerHandleDest(ctx) {
@@ -127,7 +150,7 @@ async function routerHandleDest(ctx) {
   if (!routerDestHandler || !routerDestHandler.processRouterDest) {
     ctx.status = 404;
     ctx.body = `${destType} doesn't support router transform`;
-    return;
+    return null;
   }
   const respEvents = [];
   const allDestEvents = _.groupBy(input, event => event.destination.ID);
@@ -138,6 +161,7 @@ async function routerHandleDest(ctx) {
     })
   );
   ctx.body = { output: respEvents };
+  return ctx.body;
 }
 
 if (startDestTransformer) {
@@ -148,6 +172,7 @@ if (startDestTransformer) {
       router.post(`/${version}/destinations/${destination}`, async ctx => {
         const startTime = new Date();
         await handleDest(ctx, version, destination);
+        ctx.set("apiVersion", API_VERSION);
         // Assuming that events are from one single source
 
         const metaTags =
@@ -171,6 +196,7 @@ if (startDestTransformer) {
       router.post(`/${version}/${destination}`, async ctx => {
         const startTime = new Date();
         await handleDest(ctx, version, destination);
+        ctx.set("apiVersion", API_VERSION);
         // Assuming that events are from one single source
 
         const metaTags =
@@ -344,7 +370,7 @@ if (startDestTransformer) {
           }
         })
       );
-      logger.info(`[CT] Output events: ${JSON.stringify(transformedEvents)}`);
+      logger.debug(`[CT] Output events: ${JSON.stringify(transformedEvents)}`);
       ctx.body = transformedEvents;
       ctx.set("apiVersion", API_VERSION);
       stats.timing("user_transform_request_latency", startTime, {
@@ -416,6 +442,28 @@ if (startSourceTransformer) {
   });
 }
 
+async function handleDestinationNetwork(version, ctx) {
+  const { destination } = ctx.request.body;
+  const destNetHandler = getDestNetHander(version, destination);
+  // flow should never reach the below (if) its a desperate fall-back
+  if (!destNetHandler || !destNetHandler.sendData) {
+    ctx.status = 404;
+    ctx.body = `${destination} doesn't support transformer proxy`;
+    return ctx.body;
+  }
+  const resp = await destNetHandler.sendData(ctx.request.body);
+  ctx.body = { output: resp };
+  return ctx.body;
+}
+
+if (networkMode) {
+  versions.forEach(version => {
+    router.post("/network/proxy", async ctx => {
+      await handleDestinationNetwork(version, ctx);
+    });
+  });
+}
+
 router.get("/version", ctx => {
   ctx.body = process.env.npm_package_version || "Version Info not found";
 });
@@ -433,13 +481,13 @@ router.get("/features", ctx => {
   ctx.body = JSON.stringify(obj);
 });
 
-router.post("/batch", ctx => {
+const batchHandler = ctx => {
   const { destType, input } = ctx.request.body;
   const destHandler = getDestHandler("v0", destType);
   if (!destHandler || !destHandler.batch) {
     ctx.status = 404;
     ctx.body = `${destType} doesn't support batching`;
-    return;
+    return null;
   }
   const allDestEvents = _.groupBy(input, event => event.destination.ID);
 
@@ -458,9 +506,113 @@ router.post("/batch", ctx => {
   if (response.errors.length > 0) {
     ctx.status = 500;
     ctx.body = response.errors;
-    return;
+    return null;
   }
   ctx.body = response.batchedRequests;
+  return ctx.body;
+};
+router.post("/batch", ctx => {
+  batchHandler(ctx);
 });
 
-module.exports = router;
+router.get("/heapdump", ctx => {
+  heapdump.writeSnapshot((err, filename) => {
+    logger.debug("Heap dump written to", filename);
+  });
+  ctx.body = "OK";
+});
+
+const fileUpload = async ctx => {
+  const { destType } = ctx.request.body;
+  const destFileUploadHandler = getDestFileUploadHandler(
+    "v0",
+    destType.toLowerCase()
+  );
+
+  if (!destFileUploadHandler || !destFileUploadHandler.processFileData) {
+    ctx.status = 404;
+    ctx.body = `${destType} doesn't support bulk upload`;
+    return null;
+  }
+  let response;
+  try {
+    response = await destFileUploadHandler.processFileData(ctx.request.body);
+  } catch (error) {
+    response = {
+      statusCode: error.response ? error.response.status : 400,
+      error: error.message || "Error occurred while processing payload.",
+      metadata: error.response ? error.response.metadata : null
+    };
+  }
+  ctx.body = response;
+  return ctx.body;
+};
+
+const pollStatus = async ctx => {
+  const { destType } = ctx.request.body;
+  const destFileUploadHandler = getPollStatusHandler(
+    "v0",
+    destType.toLowerCase()
+  );
+  let response;
+  if (!destFileUploadHandler || !destFileUploadHandler.processPolling) {
+    ctx.status = 404;
+    ctx.body = `${destType} doesn't support bulk upload`;
+    return null;
+  }
+  try {
+    response = await destFileUploadHandler.processPolling(ctx.request.body);
+  } catch (error) {
+    response = {
+      statusCode: error.response ? error.response.status : 400,
+      error: error.message || "Error occurred while processing payload."
+    };
+  }
+  ctx.body = response;
+  return ctx.body;
+};
+
+const getJobStatus = async (ctx, type) => {
+  const { destType } = ctx.request.body;
+  const destFileUploadHandler = getJobStatusHandler(
+    "v0",
+    destType.toLowerCase()
+  );
+
+  if (!destFileUploadHandler || !destFileUploadHandler.processJobStatus) {
+    ctx.status = 404;
+    ctx.body = `${destType} doesn't support bulk upload`;
+    return null;
+  }
+  let response;
+  try {
+    response = await destFileUploadHandler.processJobStatus(
+      ctx.request.body,
+      type
+    );
+  } catch (error) {
+    response = {
+      statusCode: error.response ? error.response.status : 400,
+      error: error.message || "Error occurred while processing payload."
+    };
+  }
+  ctx.body = response;
+  return ctx.body;
+};
+
+router.post("/fileUpload", async ctx => {
+  await fileUpload(ctx);
+});
+
+router.post("/pollStatus", async ctx => {
+  await pollStatus(ctx);
+});
+
+router.post("/getFailedJobs", async ctx => {
+  await getJobStatus(ctx, "fail");
+});
+
+router.post("/getWarningJobs", async ctx => {
+  await getJobStatus(ctx, "warn");
+});
+module.exports = { router, handleDest, routerHandleDest, batchHandler };
