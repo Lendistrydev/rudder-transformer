@@ -27,7 +27,7 @@
   "dependencies": {
     "@amplitude/ua-parser-js": "^0.7.24",
     "@ndhoule/extend": "^2.0.0",
-    "axios": "^0.21.1",
+    "axios": "^0.21.2",
     "btoa": "^1.2.1",
     "component-each": "^0.2.6",
     "crypto-js": "^4.0.0",
